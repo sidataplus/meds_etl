@@ -13,6 +13,7 @@ import jsonschema
 import meds
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 import meds_etl.unsorted
 
@@ -207,6 +208,8 @@ def test_shuffle_polars(tmp_path: pathlib.Path):
 
 
 def test_shuffle_cpp(tmp_path: pathlib.Path):
+    if meds_etl_cpp is None:
+        pytest.skip("meds_etl_cpp not installed")
     meds_dataset = tmp_path / "meds"
     create_dataset(meds_dataset)
 
