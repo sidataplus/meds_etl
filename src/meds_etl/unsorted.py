@@ -120,20 +120,22 @@ def create_and_write_shards_from_table(
 
     exprs = [b.alias(a) for a, b in columns]
 
-    # Actually execute the typecast conversion, partition table into
-    # shards based on hashed subject ID
-    event_data = table.select(*exprs).collect().partition_by(["shard"], as_dict=True, maintain_order=False)
+    event_data = table.select(*exprs).filter(pl.col("code").is_not_null())
 
-    # Validate/verify each shard's important columns and write to disk
-    for (shard_index,), shard in event_data.items():
-        verify_shard(shard, filename)
-        fname = os.path.join(temp_dir, str(shard_index), filename)
-        shard.write_parquet(fname, compression="uncompressed")
+    partition = pl.PartitionByKey(
+        temp_dir,
+        file_path=lambda ctx: f"{ctx.keys[0].str_value}/{filename}",
+        by="shard",
+        include_key=True,
+    )
+
+    event_data.sink_parquet(partition, compression="uncompressed", mkdir=True, maintain_order=False)
 
 
 def process_file(event_file: str, *, temp_dir: str, num_shards: int, property_columns: List[Tuple[str, pl.DataType]]):
     """Partition MEDS Unsorted files into shards based on subject ID and write to disk"""
     logging.info("Working on ", event_file)
+    os.environ["POLARS_MAX_THREADS"] = os.environ.get("POLARS_MAX_THREADS", "2")
 
     table = pl.scan_parquet(event_file)
 
@@ -230,11 +232,13 @@ def sort_polars(
 
         if len(os.listdir(shard_dir)) == 0:
             continue
-        events = [pl.read_parquet(os.path.join(shard_dir, a)) for a in os.listdir(shard_dir)]
+        events = [pl.scan_parquet(os.path.join(shard_dir, a)) for a in os.listdir(shard_dir)]
 
-        all_events = pl.concat(events)
-
-        sorted_events = all_events.drop("shard").sort(by=(pl.col("subject_id"), pl.col("time"), pl.col("code")), nulls_last=False)
+        sorted_events = (
+            pl.concat(events)
+            .drop("shard")
+            .sort(by=(pl.col("subject_id"), pl.col("time"), pl.col("code")), nulls_last=False)
+        ).collect(engine="streaming")
 
         # We now have our data in the final form, grouped_by_subject, but we have to do one final transformation
         # We have to convert from polar's large_list to list because large_list is not supported by huggingface

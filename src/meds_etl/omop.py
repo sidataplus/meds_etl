@@ -328,9 +328,9 @@ def write_event_data(
 
         event_data = batch.select(**columns)
         # Write this part of the MEDS Unsorted file to disk
-        fname = os.path.join(path_to_MEDS_unsorted_dir, f'{table_name.replace("/", "_")}_{uuid.uuid4()}.parquet')
+        fname = os.path.join(path_to_MEDS_unsorted_dir, f"{table_name.replace('/', '_')}_{uuid.uuid4()}.parquet")
         try:
-            event_data.collect(streaming=True).write_parquet(fname, compression="zstd", compression_level=1)
+            event_data.sink_parquet(fname, compression="zstd", compression_level=1, maintain_order=False)
         except pl.exceptions.InvalidOperationError as e:
             print(table_name)
             print(e)
@@ -367,6 +367,7 @@ def process_table_csv(args):
     """
     concept_id_map = pickle.loads(concept_id_map_data)  # 0.25 GB for STARR-OMOP
     concept_name_map = pickle.loads(concept_name_map_data)  # 0.5GB for STARR-OMOP
+    os.environ["POLARS_MAX_THREADS"] = os.environ.get("POLARS_MAX_THREADS", "2")
     if verbose:
         print("Working on ", table_file, table_name, all_table_details)
 
@@ -432,6 +433,7 @@ def process_table_parquet(args):
     """
     concept_id_map = pickle.loads(concept_id_map_data)  # 0.25 GB for STARR-OMOP
     concept_name_map = pickle.loads(concept_name_map_data)  # 0.5GB for STARR-OMOP
+    os.environ["POLARS_MAX_THREADS"] = os.environ.get("POLARS_MAX_THREADS", "2")
     if verbose:
         print("Working on ", table_files, table_name, all_table_details)
 
@@ -695,6 +697,22 @@ def main(
 
         table = pa.Table.from_pylist(code_metadata.values(), meds.code_metadata_schema())
         pq.write_table(table, os.path.join(path_to_temp_dir, "metadata", "codes.parquet"))
+        concept_code_arr = pa.array(list(concept_id_map.values()), type=pa.large_string()).dictionary_encode()
+        concept_id_table = pa.table(
+            {
+                "concept_id": list(concept_id_map.keys()),
+                "concept_code": concept_code_arr,
+            }
+        )
+        pq.write_table(concept_id_table, os.path.join(path_to_temp_dir, "metadata", "concept_id_map.parquet"))
+        concept_name_arr = pa.array(list(concept_name_map.values()), type=pa.large_string()).dictionary_encode()
+        concept_name_table = pa.table(
+            {
+                "concept_id": list(concept_name_map.keys()),
+                "concept_name": concept_name_arr,
+            }
+        )
+        pq.write_table(concept_name_table, os.path.join(path_to_temp_dir, "metadata", "concept_name_map.parquet"))
         # And we save another copy in the final/target MEDS directory
         shutil.copytree(
             os.path.join(path_to_temp_dir, "metadata"), os.path.join(args.path_to_dest_meds_dir, "metadata")
