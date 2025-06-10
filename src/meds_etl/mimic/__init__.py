@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 from importlib.resources import files
-from typing import Iterable
+from typing import Any, Callable, Dict, Iterable
 
 import jsonschema
 import meds
@@ -45,14 +45,30 @@ def normalize_icd_procedure(icd_version, icd_code):
     return pl.when(icd_version == "9").then("ICD9Proc/" + icd9_code).otherwise("ICD10PCS/" + icd10_code)
 
 
-def main():
+def main(
+    src_mimic: str | None = None,
+    destination: str | None = None,
+    num_shards: int = 100,
+    num_proc: int = 1,
+    backend: str = "polars",
+) -> None:
     parser = argparse.ArgumentParser(prog="meds_etl_mimic", description="Performs an ETL from MIMIC_IV to MEDS")
     parser.add_argument("src_mimic", type=str)
     parser.add_argument("destination", type=str)
-    parser.add_argument("--num_shards", type=int, default=100)
-    parser.add_argument("--num_proc", type=int, default=1)
-    parser.add_argument("--backend", type=str, default="polars")
-    args = parser.parse_args()
+    parser.add_argument("--num_shards", type=int, default=num_shards)
+    parser.add_argument("--num_proc", type=int, default=num_proc)
+    parser.add_argument("--backend", type=str, default=backend)
+
+    if src_mimic is None or destination is None:
+        args = parser.parse_args()
+    else:
+        args = argparse.Namespace(
+            src_mimic=src_mimic,
+            destination=destination,
+            num_shards=num_shards,
+            num_proc=num_proc,
+            backend=backend,
+        )
 
     if not os.path.exists(args.src_mimic):
         raise ValueError(f'The source MIMIC_IV folder ("{args.src_mimic}") does not seem to exist?')
@@ -64,7 +80,7 @@ def main():
 
     os.makedirs(args.destination)
 
-    column_casters = {
+    column_casters: Dict[str, Callable[[pl.Expr], pl.Expr]] = {
         "visit_id": lambda a: a.cast(pl.Int64),
         "start": functools.partial(meds_etl.utils.parse_time, time_formats=MIMIC_TIME_FORMATS),
         "end": functools.partial(meds_etl.utils.parse_time, time_formats=MIMIC_TIME_FORMATS),
@@ -448,7 +464,7 @@ def main():
 
     shutil.rmtree(temp_dir)
 
-    code_metadata = {}
+    code_metadata: Dict[str, Dict[str, Any]] = {}
 
     code_metadata_files = {
         "d_labitems_to_loinc": {
