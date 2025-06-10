@@ -570,7 +570,16 @@ def extract_metadata(path_to_src_omop_dir: str, path_to_decompressed_dir: str, v
     return metadata, code_metadata, concept_id_map, concept_name_map
 
 
-def main():
+def main(
+    path_to_src_omop_dir: str | None = None,
+    path_to_dest_meds_dir: str | None = None,
+    num_shards: int = 100,
+    num_proc: int = 1,
+    backend: str = "polars",
+    verbose: int = 0,
+    continue_job: bool = False,
+    force_refresh: bool = False,
+) -> None:
     parser = argparse.ArgumentParser(prog="meds_etl_omop", description="Performs an ETL from OMOP v5 to MEDS")
     parser.add_argument(
         "path_to_src_omop_dir",
@@ -584,34 +593,52 @@ def main():
     parser.add_argument(
         "--num_shards",
         type=int,
-        default=100,
+        default=num_shards,
         help="Number of shards to use for converting MEDS from the unsorted format "
         "to MEDS (subjects are distributed approximately uniformly at "
         "random across shards and collation/joining of OMOP tables is "
         "performed on a shard-by-shard basis).",
     )
-    parser.add_argument("--num_proc", type=int, default=1, help="Number of vCPUs to use for performing the MEDS ETL")
+    parser.add_argument(
+        "--num_proc", type=int, default=num_proc, help="Number of vCPUs to use for performing the MEDS ETL"
+    )
     parser.add_argument(
         "--backend",
         type=str,
-        default="polars",
-        help="The backend to use when converting from MEDS Unsorted to MEDS in the ETL. See the README for a discussion on possible backends.",
+        default=backend,
+        help=(
+            "The backend to use when converting from MEDS Unsorted to MEDS in the ETL. "
+            "See the README for a discussion on possible backends."
+        ),
     )
-    parser.add_argument("--verbose", type=int, default=0)
+    parser.add_argument("--verbose", type=int, default=verbose)
     parser.add_argument(
         "--continue_job",
         dest="continue_job",
         action="store_true",
+        default=continue_job,
         help="If set, the job continues from a previous run, starting after the "
         "conversion to MEDS Unsorted but before converting from MEDS Unsorted to MEDS.",
     )
     parser.add_argument(
         "--force_refresh",
         action="store_true",
+        default=force_refresh,
         help="If set, this will overwrite all previous MEDS data in the output dir.",
     )
-
-    args = parser.parse_args()
+    if path_to_src_omop_dir is None or path_to_dest_meds_dir is None:
+        args = parser.parse_args()
+    else:
+        args = argparse.Namespace(
+            path_to_src_omop_dir=path_to_src_omop_dir,
+            path_to_dest_meds_dir=path_to_dest_meds_dir,
+            num_shards=num_shards,
+            num_proc=num_proc,
+            backend=backend,
+            verbose=verbose,
+            continue_job=continue_job,
+            force_refresh=force_refresh,
+        )
 
     if not os.path.exists(args.path_to_src_omop_dir):
         raise ValueError(f'The source OMOP folder ("{args.path_to_src_omop_dir}") does not seem to exist?')
@@ -762,8 +789,8 @@ def main():
         # Each subprocess will read in a decompressed file and put all measurements for a given subject
         # into that subject's corresponding shard. This makes creating subject timelines downstream
         # (where timelines incorporate measurements from across different tables) much less RAM intensive.
-        all_csv_tasks = []
-        all_parquet_tasks = []
+        all_csv_tasks: list[Any] = []
+        all_parquet_tasks: list[Any] = []
         for table_name, table_details in tables.items():
             csv_table_files, parquet_table_files = get_table_files(
                 path_to_src_omop_dir=args.path_to_src_omop_dir,

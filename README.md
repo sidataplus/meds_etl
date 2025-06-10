@@ -108,3 +108,42 @@ Then you'll need to install the run the following:
 pip uninstall polars
 pip install polars-lts-cpu
 ```
+
+## Using with Dagster
+
+Install the package from PyPI or your fork and call the ETL functions from your Dagster ops.
+
+```bash
+pip install meds_etl
+# optional C++ backend
+pip install "meds_etl[cpp]"
+```
+
+For a forked version:
+
+```bash
+pip install -e /path/to/your/meds_etl_fork[cpp]
+# or
+pip install "git+https://github.com/<your-user>/meds_etl.git#egg=meds_etl[cpp]"
+```
+
+Example Dagster usage:
+
+```python
+from dagster import op
+from meds_etl.mimic import main as run_mimic
+from meds_etl.omop import main as run_omop
+
+@op
+def mimic_etl_op():
+    run_mimic(src_mimic="/path/to/mimic", destination="/path/to/output")
+
+@op
+def omop_etl_op():
+    run_omop(
+        path_to_src_omop_dir="/path/to/omop",
+        path_to_dest_meds_dir="/path/to/output",
+    )
+```
+
+The `main()` functions now accept parameters directly, so you can call them from Python without constructing command-line arguments.
